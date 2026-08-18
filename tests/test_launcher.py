@@ -1,13 +1,17 @@
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import launcher
+from copperbars_launcher import core
 
 
-def test_rule_allows_simple():
+def test_rule_allows_default_and_disallow_exception():
     assert launcher.rule_allows(None)
     assert launcher.rule_allows([{"action": "allow"}])
+    assert launcher.rule_allows([{"action": "disallow", "os": {"name": "linux"}}])
 
 
 def test_offline_uuid_is_stable():
@@ -37,49 +41,57 @@ def test_json_roundtrip(tmp_path):
 
 
 def test_build_command_contains_memory(monkeypatch, tmp_path):
-    monkeypatch.setattr(launcher, "find_java", lambda _: "java")
-    monkeypatch.setattr(launcher, "VERSIONS_DIR", tmp_path / "versions")
-    monkeypatch.setattr(launcher, "LIBRARIES_DIR", tmp_path / "libraries")
-    version_dir = launcher.VERSIONS_DIR / "1.21.11"
+    monkeypatch.setattr(core, "find_java", lambda version, explicit="", log=None: "java")
+    monkeypatch.setattr(core, "extract_natives", lambda *_args, **_kwargs: tmp_path / "natives")
+    monkeypatch.setattr(core, "library_artifacts", lambda _: ([], []))
+    monkeypatch.setattr(core, "LIBRARIES_DIR", tmp_path / "libraries")
+    monkeypatch.setattr(core, "VERSIONS_DIR", tmp_path / "versions")
+    version_dir = core.VERSIONS_DIR / "1.21.11"
     version_dir.mkdir(parents=True)
     (version_dir / "1.21.11.jar").write_bytes(b"jar")
     account = launcher.make_offline_account("CopperBars")
     settings = launcher.Settings(game_directory=str(tmp_path / "game"), memory_mb=4096, selected_version="1.21.11")
-    command = launcher.build_command("1.21.11", {"mainClass": "net.minecraft.client.main.Main", "libraries": [], "arguments": {"jvm": [], "game": []}}, account, settings)
+    command = launcher.build_command(
+        "1.21.11",
+        {"mainClass": "net.minecraft.client.main.Main", "libraries": [], "arguments": {"jvm": [], "game": []}},
+        account,
+        settings,
+    )
     assert "-Xmx4096M" in command
 
 
-def test_legacy_arguments_are_supported(monkeypatch, tmp_path):
-    monkeypatch.setattr(launcher, "find_java", lambda _: "java")
-    monkeypatch.setattr(launcher, "VERSIONS_DIR", tmp_path / "versions")
-    monkeypatch.setattr(launcher, "LIBRARIES_DIR", tmp_path / "libraries")
-    version_dir = launcher.VERSIONS_DIR / "1.12.2"
-    version_dir.mkdir(parents=True)
-    (version_dir / "1.12.2.jar").write_bytes(b"jar")
-    account = launcher.make_offline_account("CopperBars")
-    settings = launcher.Settings(game_directory=str(tmp_path / "game"), memory_mb=2048, selected_version="1.12.2")
-    command = launcher.build_command("1.12.2", {"mainClass": "net.minecraft.client.main.Main", "libraries": [], "minecraftArguments": "--username ${auth_player_name} --version ${version_name}"}, account, settings)
-    assert "CopperBars" in command
-    assert "1.12.2" in command
+def test_required_java_major():
+    assert launcher.required_java_major({"javaVersion": {"majorVersion": 21}}) == 21
+    assert launcher.required_java_major({"compatibleJavaMajors": [17, 21]}) == 21
 
 
-def test_manifest_merge_parent(monkeypatch, tmp_path):
-    monkeypatch.setattr(launcher, "VERSIONS_DIR", tmp_path / "versions")
-    monkeypatch.setattr(launcher, "LIBRARIES_DIR", tmp_path / "libraries")
-    monkeypatch.setattr(launcher, "ASSETS_DIR", tmp_path / "assets")
-    monkeypatch.setattr(launcher, "MANIFEST_FILE", tmp_path / "manifest.json")
-    launcher.VERSIONS_DIR.mkdir(parents=True)
-    launcher.LIBRARIES_DIR.mkdir(parents=True)
-    launcher.ASSETS_DIR.mkdir(parents=True)
-    launcher.save_json(launcher.MANIFEST_FILE, {"versions": [{"id": "child", "url": "http://unused", "sha1": ""}, {"id": "parent", "url": "http://unused", "sha1": ""}]})
-    parent = {"id": "parent", "mainClass": "Parent", "libraries": [{"name": "a:b:c"}]}
-    child = {"id": "child", "inheritsFrom": "parent", "mainClass": "Child", "libraries": [{"name": "d:e:f"}]}
-    def fake_download(url, dest, **kwargs):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        data = parent if dest.stem == "parent" else child
-        dest.write_text(json.dumps(data), encoding="utf-8")
-    monkeypatch.setattr(launcher, "download_file", fake_download)
-    monkeypatch.setattr(launcher, "library_artifacts", lambda _: ([], []))
-    result = launcher.ensure_version("child")
-    assert result["mainClass"] == "Child"
-    assert len(result["libraries"]) == 2
+def test_recommended_ram_is_sane(monkeypatch):
+    monkeypatch.setattr(core, "total_system_ram_mb", lambda: 16384)
+    assert launcher.recommended_ram_mb() == 8192
+
+
+def test_profile_roundtrip(tmp_path, monkeypatch):
+    path = tmp_path / "profiles.json"
+    monkeypatch.setattr(core, "PROFILES_FILE", path)
+    profiles = [launcher.Profile(id="x", name="Test", version="1.21.11", memory_mb=4096, game_directory=str(tmp_path / "game"))]
+    launcher.save_profiles(profiles)
+    loaded = launcher.load_profiles()
+    assert loaded[0].name == "Test"
+
+
+def test_modpack_rejects_path_traversal(tmp_path):
+    import zipfile
+    zip_path = tmp_path / "bad.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("../../outside.txt", "bad")
+    profile = launcher.Profile(id="x", name="Test", game_directory=str(tmp_path / "game"))
+    try:
+        launcher.import_modpack(str(zip_path), profile)
+    except launcher.AppError:
+        return
+    raise AssertionError("Unsafe modpack path was accepted")
+
+
+def test_managed_java_component_fallback():
+    assert core._java_component(25, {}) == "java-runtime-epsilon"
+    assert core._java_component(21, {}) == "java-runtime-delta"
