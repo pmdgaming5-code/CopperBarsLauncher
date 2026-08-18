@@ -1,16 +1,45 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-where py >nul 2>&1
-if %errorlevel% equ 0 (
-    py -3 launcher.py
-    exit /b %errorlevel%
+set "EXE=%~dp0dist\CopperBarsLauncher\copperbarslauncher.exe"
+
+if exist "%EXE%" (
+    start "CopperBars Launcher" "%EXE%"
+    exit /b 0
 )
-where python >nul 2>&1
+
+where pwsh >nul 2>&1
 if %errorlevel% equ 0 (
-    python launcher.py
-    exit /b %errorlevel%
+    echo CopperBars Launcher buildi baslatiliyor...
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "%~dp0build\build-prism.ps1"
+    if errorlevel 1 (
+        echo.
+        echo Build basarisiz oldu. Yukaridaki hatayi kontrol edin.
+        pause
+        exit /b 1
+    )
+    if exist "%EXE%" (
+        start "CopperBars Launcher" "%EXE%"
+        exit /b 0
+    )
 )
-echo Python 3.11 veya daha yeni bir surum bulunamadi.
-echo https://www.python.org/downloads/ adresinden Python kurup tekrar deneyin.
+
+where powershell >nul 2>&1
+if %errorlevel% equ 0 (
+    echo CopperBars Launcher buildi baslatiliyor...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build\build-prism.ps1"
+    if errorlevel 1 (
+        echo.
+        echo Build basarisiz oldu. Yukaridaki hatayi kontrol edin.
+        pause
+        exit /b 1
+    )
+    if exist "%EXE%" (
+        start "CopperBars Launcher" "%EXE%"
+        exit /b 0
+    )
+)
+
+echo PowerShell bulunamadi. Windows PowerShell veya PowerShell 7 gereklidir.
 pause
+exit /b 1
