@@ -1,5 +1,5 @@
 #define MyAppName "CopperBars Launcher"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "pmdgaming5-code"
 #define MyAppURL "https://github.com/pmdgaming5-code/CopperBarsLauncher"
 #define MyAppExeName "CopperBarsLauncher.exe"
