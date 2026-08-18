@@ -1,0 +1,96 @@
+name: Sync Prism upstream into CopperBars
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-prism-upstream.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout CopperBars
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Prism Launcher source
+        run: |
+          git clone --depth 1 --branch develop --recursive https://github.com/PrismLauncher/PrismLauncher.git /tmp/prism
+          git -C /tmp/prism rev-parse HEAD > /tmp/prism_commit
+
+      - name: Replace repository source with Prism source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/copper-preserve
+          cp .github/workflows/sync-prism-upstream.yml /tmp/copper-preserve/sync-prism-upstream.yml
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' ! -name '.github' -exec rm -rf {} +
+          cp -a /tmp/prism/. .
+          rm -rf .git
+          cp /tmp/copper-preserve/sync-prism-upstream.yml .github/workflows/sync-prism-upstream.yml
+          printf '%s\n' "$(cat /tmp/prism_commit)" > COPPERBARS_PRISM_COMMIT
+
+      - name: Apply CopperBars branding and defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('CMakeLists.txt')
+          s = p.read_text(encoding='utf-8')
+          replacements = {
+              'set(Launcher_UPDATER_GITHUB_REPO "https://github.com/PrismLauncher/PrismLauncher"': 'set(Launcher_UPDATER_GITHUB_REPO "https://github.com/pmdgaming5-code/CopperBarsLauncher"',
+              'set(Launcher_BUG_TRACKER_URL "https://github.com/PrismLauncher/PrismLauncher/issues"': 'set(Launcher_BUG_TRACKER_URL "https://github.com/pmdgaming5-code/CopperBarsLauncher/issues"',
+              'set(Launcher_IMGUR_CLIENT_ID "5b97b0713fba4a3"': 'set(Launcher_IMGUR_CLIENT_ID ""',
+              'set(Launcher_NEWS_RSS_URL "https://prismlauncher.org/feed/feed.xml"': 'set(Launcher_NEWS_RSS_URL ""',
+              'set(Launcher_NEWS_OPEN_URL "https://prismlauncher.org/news"': 'set(Launcher_NEWS_OPEN_URL "https://github.com/pmdgaming5-code/CopperBarsLauncher"',
+              'set(Launcher_WIKI_URL "https://prismlauncher.org/wiki/"': 'set(Launcher_WIKI_URL "https://github.com/pmdgaming5-code/CopperBarsLauncher/wiki"',
+              'set(Launcher_TRANSLATIONS_URL "https://hosted.weblate.org/projects/prismlauncher/launcher/"': 'set(Launcher_TRANSLATIONS_URL ""',
+              'set(Launcher_TRANSLATION_FILES_URL "https://i18n.prismlauncher.org/"': 'set(Launcher_TRANSLATION_FILES_URL ""',
+              'set(Launcher_MATRIX_URL "https://prismlauncher.org/matrix"': 'set(Launcher_MATRIX_URL ""',
+              'set(Launcher_DISCORD_URL "https://prismlauncher.org/discord"': 'set(Launcher_DISCORD_URL ""',
+              'set(Launcher_SUBREDDIT_URL "https://prismlauncher.org/reddit"': 'set(Launcher_SUBREDDIT_URL ""',
+              'set(Launcher_APP_BINARY_NAME "prismlauncher"': 'set(Launcher_APP_BINARY_NAME "copperbarslauncher"',
+              'set(Launcher_BUILD_PLATFORM "unknown"': 'set(Launcher_BUILD_PLATFORM "copperbars-windows"',
+          }
+          for old, new in replacements.items():
+              s = s.replace(old, new)
+          p.write_text(s, encoding='utf-8')
+
+          readme = Path('README.md')
+          if readme.exists():
+              text = readme.read_text(encoding='utf-8')
+              text = text.replace('Prism Launcher', 'CopperBars Launcher')
+              text = text.replace('prismlauncher/PrismLauncher', 'pmdgaming5-code/CopperBarsLauncher')
+              text += '\n\n## CopperBars fork\n\nCopperBars Launcher is an independent custom build derived from Prism Launcher. It is not endorsed by or affiliated with Prism Launcher. The Prism Launcher source code remains under its original GPL-3.0-only / applicable component licenses.\n'
+              readme.write_text(text, encoding='utf-8')
+
+          copying = Path('COPYING.md')
+          if copying.exists():
+              text = copying.read_text(encoding='utf-8')
+              text += '\n\nCopperBars Launcher modifications are distributed under the same GPL-3.0-only terms required by the upstream Prism Launcher source.\n'
+              copying.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Commit imported source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'CopperBars Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No source changes.'
+            exit 0
+          fi
+          git commit -m "Replace launcher core with Prism upstream and rebrand as CopperBars"
+          git push origin HEAD:main
