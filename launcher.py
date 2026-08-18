@@ -7,7 +7,7 @@ from copperbars_launcher.core import (
     maven_path, preflight, recommended_ram_mb, required_java_major, rule_allows,
     save_accounts, save_json, save_profiles, save_settings, total_system_ram_mb,
 )
-from copperbars_launcher.ui import LauncherApp
+from copperbars_launcher.ui_v2 import LauncherApp
 
 __all__ = [
     "Account", "AppError", "Profile", "Settings", "LauncherApp",
