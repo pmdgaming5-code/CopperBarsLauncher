@@ -1,0 +1,98 @@
+name: CopperBars Prism Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout CopperBars
+        uses: actions/checkout@v4
+
+      - name: Checkout pinned Prism source
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .upstream | Out-Null
+          git clone --recursive https://github.com/PrismLauncher/PrismLauncher.git .upstream/PrismLauncher
+          Set-Location .upstream/PrismLauncher
+          git fetch origin develop
+          git checkout --detach (Get-Content ../../UPSTREAM_PRISM_COMMIT -Raw).Trim()
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Setup Prism dependencies
+        uses: ./.upstream/PrismLauncher/.github/actions/setup-dependencies
+        with:
+          build-type: Release
+          artifact-name: Windows-MSVC
+          vcvars-arch: amd64
+          qt-version: 6.10.2
+
+      - name: Apply CopperBars branding
+        shell: pwsh
+        run: .\build\apply-copperbars-branding.ps1 -SourceRoot .\.upstream\PrismLauncher
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S .upstream/PrismLauncher -B .upstream/build -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DLauncher_APP_BINARY_NAME=copperbarslauncher `
+            -DLauncher_BUILD_PLATFORM=copperbars-windows `
+            -DLauncher_UPDATER_GITHUB_REPO=https://github.com/pmdgaming5-code/CopperBarsLauncher `
+            -DLauncher_BUILD_ARTIFACT=CopperBarsLauncher-Windows-x64 `
+            -DLauncher_META_URL= `
+            -DLauncher_IMGUR_CLIENT_ID= `
+            -DLauncher_MSA_CLIENT_ID= `
+            -DLauncher_CURSEFORGE_API_KEY= `
+            -DLauncher_BUG_TRACKER_URL=https://github.com/pmdgaming5-code/CopperBarsLauncher/issues `
+            -DLauncher_NEWS_RSS_URL= `
+            -DLauncher_NEWS_OPEN_URL=https://github.com/pmdgaming5-code/CopperBarsLauncher `
+            -DLauncher_WIKI_URL=https://github.com/pmdgaming5-code/CopperBarsLauncher/wiki `
+            -DLauncher_TRANSLATIONS_URL= `
+            -DLauncher_TRANSLATION_FILES_URL= `
+            -DLauncher_MATRIX_URL= `
+            -DLauncher_DISCORD_URL= `
+            -DLauncher_SUBREDDIT_URL= `
+            -DLauncher_ENABLE_JAVA_DOWNLOADER=ON `
+            -DBUILD_TESTING=ON `
+            -DVCPKG_HOST_TRIPLET=$env:VCPKG_TRIPLET `
+            -DVCPKG_TARGET_TRIPLET=$env:VCPKG_TRIPLET
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build .upstream/build --config Release --parallel
+
+      - name: Test
+        shell: pwsh
+        run: ctest --test-dir .upstream/build --build-config Release --output-on-failure
+
+      - name: Install portable package
+        shell: pwsh
+        run: cmake --install .upstream/build --config Release --component portable --prefix dist/CopperBarsLauncher
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/CopperBarsLauncher -Filter 'copperbarslauncher*.exe' -Recurse | Select-Object -First 1
+          if (-not $exe) { throw 'CopperBars executable missing.' }
+          $p = Start-Process $exe.FullName -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited -and $p.ExitCode -ne 0) { throw "Launcher exited with $($p.ExitCode)" }
+          if (-not $p.HasExited) { Stop-Process $p.Id -Force }
+
+      - name: Archive
+        shell: pwsh
+        run: Compress-Archive -Path dist/CopperBarsLauncher/* -DestinationPath CopperBarsLauncher-Windows-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CopperBarsLauncher-Windows-x64
+          path: CopperBarsLauncher-Windows-x64.zip
