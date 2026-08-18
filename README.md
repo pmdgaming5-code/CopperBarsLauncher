@@ -1,39 +1,42 @@
-# CopperBars Launcher
+# CopperBars Launcher 2.0
 
-Windows için modern, açık kaynaklı Minecraft launcher.
+Açık kaynaklı, Windows odaklı ve sade bir Minecraft Java launcher.
 
-## Özellikler
+## Neden CopperBars?
 
-- Mojang sürüm manifestinden release/snapshot sürüm listesi.
-- Minecraft client, library ve asset dosyalarını indirir.
-- SHA-1 doğrulaması ile bozuk indirmeleri yeniden alır.
-- Legacy/Offline profil desteği.
-- Microsoft cihaz kodu ile oturum açma.
-- Java algılama ve özel Java yolu.
-- RAM, oyun klasörü ve çözünürlük ayarları.
-- Minecraft JVM/game argümanlarını sürüm manifestinden oluşturur.
-- Windows tek dosya EXE ve Inno Setup kurulum paketi.
+CopperBars yalnızca bir "Play" butonu değil. Kendi kullanım alanını oluşturan özellikler sunar:
 
-## Derleme
+- **Copper Profiles:** Her profilin ayrı Minecraft sürümü, oyun klasörü, RAM ve JVM ayarları vardır.
+- **Java AutoPilot:** Java yolunu elle seçmek zorunlu değildir. Launcher uygun Java'yı bilgisayarda arar; uyumlu sürüm yoksa resmi Mojang Java runtime manifestlerinden gerekli runtime'ı otomatik indirip yönetir.
+- **Copper Shield:** Başlatmadan önce client, Java sürümü, disk alanı ve indirilen dosyalar için doğrulama yapar.
+- **Repair:** Eksik veya bozuk Minecraft dosyalarını SHA-1 ile yeniden doğrular/indirir.
+- **Copper Boost:** Sistem RAM'ini okuyup makul bir oyun belleği önerir ve güvenli JVM ayarlarını uygular.
+- **Modpack Import:** ZIP modpack'lerini profil klasörüne güvenli yol kontrolüyle aktarır.
+- **Fancy UI:** Koyu Copper teması, hızlı araçlar, profil merkezli çalışma alanı ve canlı günlük paneli.
+- **Microsoft device-code login:** Parola launcher'a girilmeden resmi cihaz kodu akışı kullanılır.
 
-Windows PowerShell:
+## Kurulum
+
+Windows için önerilen yol GitHub Releases bölümündeki `CopperBarsLauncher-Setup-2.0.0.exe` kurulum paketidir.
+
+Geliştirme için:
 
 ```powershell
-./build/build.ps1
+python --version
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python -m compileall -q .
+python launcher.py
 ```
 
-Installer için Inno Setup 6 ile `installer/CopperBarsLauncher.iss` derlenir.
+Python 3.11 veya daha yenisi gerekir.
 
-## Kimlik doğrulama
+## Mimari
 
-Microsoft oturumu OAuth cihaz kodu akışını kullanır. Kullanıcı tarayıcı üzerinden Microsoft hesabına giriş yapar; parola launcher tarafından istenmez. Microsoft cihaz kodu protokolü cihaz kodu, doğrulama URI'si, polling aralığı ve refresh token davranışını tanımlar.
+Launcher kodu `copperbars_launcher/` altında çekirdek, uyumluluk ve arayüz olarak ayrılmıştır. `launcher.py` yalnızca giriş noktası ve geriye dönük test/import uyumluluğu sağlar.
 
-Launcher ayrıca offline profil oluşturabilir. Offline profil, yalnızca offline kabul eden ortamlarda kullanılabilir; resmi çevrimiçi hizmetler için hesabın Minecraft sahibi olması gerekir. Launcher herhangi bir hesap doğrulamasını atlatmaz.
-
-## Mimari not
-
-Proje, açık kaynak launcher'larda kullanılan genel tasarım desenlerinden esinlenen özgün bir uygulamadır; Legacy Launcher veya Prism Launcher kaynak kodunun kopyası değildir.
+Açık kaynak launcher projelerindeki genel tasarım fikirlerinden esinlenmiştir; Legacy Launcher veya Prism Launcher kaynak kodu kopyalanmamıştır.
 
 ## Lisans
 
-Bu proje repo'nun MIT lisansı altında dağıtılır. Minecraft yazılımı ve varlıkları Mojang/Microsoft'a aittir; launcher bunları resmi servislerden indirir.
+Bu proje repo'nun MIT lisansı altındadır. Minecraft yazılımı, Java runtime dağıtımları ve oyun varlıkları ilgili hak sahiplerine aittir; launcher resmi servislerden gerekli dosyaları indirir.
