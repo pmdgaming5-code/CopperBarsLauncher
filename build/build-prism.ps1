@@ -32,12 +32,15 @@ try {
     Pop-Location
 }
 
+& (Join-Path $PSScriptRoot 'apply-copperbars-branding.ps1') -SourceRoot $UpstreamDir
+if ($LASTEXITCODE -ne 0) { throw 'CopperBars branding patch failed.' }
+
 if (Test-Path $BuildDir) { Remove-Item $BuildDir -Recurse -Force }
 if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
 $qt = $env:COPPERBARS_QT
-if (-not $qt) { $qt = 'C:\Qt\6.9.2\msvc2022_64' }
+if (-not $qt) { $qt = 'C:\Qt\6.10.2\msvc2022_64' }
 
 $cmakeArgs = @(
     '-S', $UpstreamDir,
@@ -66,19 +69,29 @@ $cmakeArgs = @(
     '-DBUILD_TESTING=ON'
 )
 
+if ($env:VCPKG_ROOT) {
+    $cmakeArgs += "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake"
+    $cmakeArgs += '-DVCPKG_HOST_TRIPLET=x64-windows'
+    $cmakeArgs += '-DVCPKG_TARGET_TRIPLET=x64-windows'
+}
+
 Write-Host "Configuring CopperBars Launcher from Prism commit $Commit" -ForegroundColor Cyan
 & cmake @cmakeArgs
-if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed." }
+if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
 
 Write-Host 'Building CopperBars Launcher...' -ForegroundColor Cyan
 & cmake --build $BuildDir --config Release --parallel
-if ($LASTEXITCODE -ne 0) { throw "Build failed." }
+if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+
+Write-Host 'Running tests...' -ForegroundColor Cyan
+& ctest --test-dir $BuildDir --build-config Release --output-on-failure
+if ($LASTEXITCODE -ne 0) { throw 'Tests failed.' }
 
 Write-Host 'Installing portable build...' -ForegroundColor Cyan
 & cmake --install $BuildDir --config Release --component portable --prefix $InstallDir
-if ($LASTEXITCODE -ne 0) { throw "Install failed." }
+if ($LASTEXITCODE -ne 0) { throw 'Install failed.' }
 
 $exe = Get-ChildItem -Path $InstallDir -Filter 'copperbarslauncher*.exe' -Recurse | Select-Object -First 1
-if (-not $exe) { throw "Build succeeded but CopperBars executable was not found." }
+if (-not $exe) { throw 'Build succeeded but CopperBars executable was not found.' }
 
 Write-Host "SUCCESS: $($exe.FullName)" -ForegroundColor Green
