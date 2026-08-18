@@ -1,4 +1,4 @@
-from __future__
+from __future__ import annotations
 
 import hashlib
 import json
@@ -15,14 +15,14 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "CopperBars Launcher"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 DEFAULT_VERSION = "1.21.11"
 VERSION_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 MS_CLIENT_ID = "00000000402b5328"
@@ -33,16 +33,16 @@ XBL_AUTH_ENDPOINT = "https://user.auth.xboxlive.com/user/authenticate"
 XSTS_ENDPOINT = "https://xsts.auth.xboxlive.com/xsts/authorize"
 MINECRAFT_LOGIN_ENDPOINT = "https://api.minecraftservices.com/authentication/login_with_xbox"
 MINECRAFT_PROFILE_ENDPOINT = "https://api.minecraftservices.com/minecraft/profile"
-USER_AGENT = "CopperBarsLauncher/1.0.0 (https://github.com/pmdgaming5-code/CopperBarsLauncher)"
+USER_AGENT = f"CopperBarsLauncher/{APP_VERSION} (https://github.com/pmdgaming5-code/CopperBarsLauncher)"
 
 
 def app_data_dir() -> Path:
     if os.name == "nt":
-        base = Path(os.getenv("APPDATA", Path.home() / "AppData" / "Roaming"))
+        base = Path(os.getenv("APPDATA") or (Path.home() / "AppData" / "Roaming"))
     elif platform.system() == "Darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
-        base = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config"))
+        base = Path(os.getenv("XDG_CONFIG_HOME") or (Path.home() / ".config"))
     path = base / "CopperBarsLauncher"
     path.mkdir(parents=True, exist_ok=True)
     return path
@@ -55,10 +55,9 @@ MANIFEST_FILE = ROOT / "version_manifest.json"
 VERSIONS_DIR = ROOT / "versions"
 LIBRARIES_DIR = ROOT / "libraries"
 ASSETS_DIR = ROOT / "assets"
-INSTANCES_DIR = ROOT / "instances"
 JAVA_DIR = ROOT / "runtime"
 
-for directory in (VERSIONS_DIR, LIBRARIES_DIR, ASSETS_DIR, INSTANCES_DIR):
+for directory in (VERSIONS_DIR, LIBRARIES_DIR, ASSETS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -90,9 +89,9 @@ class AppError(RuntimeError):
 
 
 def load_json(path: Path, default: Any) -> Any:
-    if not path.exists():
-        return default
     try:
+        if not path.exists():
+            return default
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return default
@@ -107,11 +106,12 @@ def save_json(path: Path, data: Any) -> None:
 
 def load_settings() -> Settings:
     raw = load_json(CONFIG_FILE, {})
-    result = Settings()
-    for key in asdict(result):
-        if key in raw:
-            setattr(result, key, raw[key])
-    return result
+    settings = Settings()
+    if isinstance(raw, dict):
+        for key in asdict(settings):
+            if key in raw:
+                setattr(settings, key, raw[key])
+    return settings
 
 
 def save_settings(settings: Settings) -> None:
@@ -120,15 +120,29 @@ def save_settings(settings: Settings) -> None:
 
 def load_accounts() -> list[Account]:
     raw = load_json(ACCOUNTS_FILE, [])
-    return [Account(**item) for item in raw if isinstance(item, dict) and item.get("id")]
+    accounts: list[Account] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and item.get("id") and item.get("username") and item.get("uuid"):
+                try:
+                    accounts.append(Account(**item))
+                except TypeError:
+                    continue
+    return accounts
 
 
 def save_accounts(accounts: list[Account]) -> None:
     save_json(ACCOUNTS_FILE, [asdict(account) for account in accounts])
 
 
-def request_json(url: str, *, method: str = "GET", data: dict[str, Any] | None = None,
-                headers: dict[str, str] | None = None, timeout: int = 30) -> Any:
+def request_json(
+    url: str,
+    *,
+    method: str = "GET",
+    data: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+) -> Any:
     body = None
     final_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     if headers:
@@ -142,17 +156,24 @@ def request_json(url: str, *, method: str = "GET", data: dict[str, Any] | None =
             payload = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
-        raise AppError(f"HTTP {exc.code} — {details[:400]}") from exc
+        raise AppError(f"HTTP {exc.code}: {details[:500]}") from exc
     except urllib.error.URLError as exc:
         raise AppError(f"Ağ hatası: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise AppError("Ağ isteği zaman aşımına uğradı.") from exc
     try:
         return json.loads(payload)
     except json.JSONDecodeError as exc:
         raise AppError("Sunucu geçerli JSON döndürmedi.") from exc
 
 
-def request_json_body(url: str, body: dict[str, Any], *, headers: dict[str, str] | None = None,
-                      timeout: int = 30) -> Any:
+def request_json_body(
+    url: str,
+    body: dict[str, Any],
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+) -> Any:
     final_headers = {"User-Agent": USER_AGENT, "Accept": "application/json", "Content-Type": "application/json"}
     if headers:
         final_headers.update(headers)
@@ -162,9 +183,11 @@ def request_json_body(url: str, body: dict[str, Any], *, headers: dict[str, str]
             payload = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
-        raise AppError(f"HTTP {exc.code} — {details[:500]}") from exc
+        raise AppError(f"HTTP {exc.code}: {details[:500]}") from exc
     except urllib.error.URLError as exc:
         raise AppError(f"Ağ hatası: {exc.reason}") from exc
+    except TimeoutError as exc:
+        raise AppError("Ağ isteği zaman aşımına uğradı.") from exc
     try:
         return json.loads(payload)
     except json.JSONDecodeError as exc:
@@ -180,26 +203,31 @@ def sha1_file(path: Path) -> str:
 
 
 def safe_file_name(value: str) -> str:
-    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value)
-    return value.strip("._") or "file"
+    return (re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._") or "file")
 
 
-def download_file(url: str, destination: Path, *, expected_sha1: str | None = None,
-                  progress: Callable[[int, int], None] | None = None) -> None:
+def download_file(
+    url: str,
+    destination: Path,
+    *,
+    expected_sha1: str | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if destination.exists() and expected_sha1:
-        try:
-            if sha1_file(destination).lower() == expected_sha1.lower():
-                return
-        except OSError:
-            pass
-    elif destination.exists() and not expected_sha1 and destination.stat().st_size > 0:
-        return
+    if destination.exists():
+        if expected_sha1:
+            try:
+                if sha1_file(destination).lower() == expected_sha1.lower():
+                    return
+            except OSError:
+                pass
+        elif destination.stat().st_size > 0:
+            return
     temporary = destination.with_suffix(destination.suffix + ".part")
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(request, timeout=60) as response, temporary.open("wb") as handle:
-            total = int(response.headers.get("Content-Length", "0"))
+            total = int(response.headers.get("Content-Length") or 0)
             done = 0
             while True:
                 chunk = response.read(1024 * 1024)
@@ -209,13 +237,15 @@ def download_file(url: str, destination: Path, *, expected_sha1: str | None = No
                 done += len(chunk)
                 if progress:
                     progress(done, total)
-    except (urllib.error.URLError, OSError) as exc:
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
         temporary.unlink(missing_ok=True)
         raise AppError(f"İndirme başarısız: {url}\n{exc}") from exc
     temporary.replace(destination)
-    if expected_sha1 and sha1_file(destination).lower() != expected_sha1.lower():
-        destination.unlink(missing_ok=True)
-        raise AppError(f"SHA-1 doğrulaması başarısız: {destination.name}")
+    if expected_sha1:
+        actual = sha1_file(destination).lower()
+        if actual != expected_sha1.lower():
+            destination.unlink(missing_ok=True)
+            raise AppError(f"SHA-1 doğrulaması başarısız: {destination.name}")
 
 
 def current_os() -> str:
@@ -228,7 +258,8 @@ def current_os() -> str:
 
 
 def current_arch() -> str:
-    return "x86_64" if platform.machine().lower() in {"amd64", "x86_64", "x64"} else "x86"
+    arch = platform.machine().lower()
+    return "x86_64" if arch in {"amd64", "x86_64", "x64", "aarch64"} else "x86"
 
 
 def rule_allows(rules: list[dict[str, Any]] | None) -> bool:
@@ -238,19 +269,26 @@ def rule_allows(rules: list[dict[str, Any]] | None) -> bool:
     os_name = current_os()
     arch = current_arch()
     for rule in rules:
+        if not isinstance(rule, dict):
+            continue
         features = rule.get("features", {})
         os_rule = rule.get("os", {})
         matches = True
-        if "name" in os_rule and os_rule["name"] != os_name:
+        if isinstance(os_rule, dict):
+            if os_rule.get("name") and os_rule["name"] != os_name:
+                matches = False
+            if os_rule.get("arch") and os_rule["arch"] not in {arch, "x86_64" if arch == "x86_64" else "x86"}:
+                matches = False
+        # Feature-gated libraries are only used when we explicitly know the feature.
+        # Unknown launcher features must not be treated as enabled.
+        if features and any(features.values()):
             matches = False
-        if "arch" in os_rule and os_rule["arch"] != arch:
-            matches = False
-        if features:
-            matches = False
+        if not matches:
+            continue
         action = rule.get("action", "allow")
-        if matches and action == "allow":
+        if action == "allow":
             allowed = True
-        elif matches and action == "disallow":
+        elif action == "disallow":
             allowed = False
     return allowed
 
@@ -267,30 +305,41 @@ def library_artifacts(version_json: dict[str, Any]) -> tuple[list[Path], list[Pa
     classpath: list[Path] = []
     natives: list[Path] = []
     for library in version_json.get("libraries", []):
-        if not rule_allows(library.get("rules")):
+        if not isinstance(library, dict) or not rule_allows(library.get("rules")):
             continue
         downloads = library.get("downloads", {})
-        artifact = downloads.get("artifact")
-        if artifact and artifact.get("url"):
+        artifact = downloads.get("artifact") if isinstance(downloads, dict) else None
+        if artifact and artifact.get("url") and artifact.get("path"):
             path = LIBRARIES_DIR / artifact["path"]
             download_file(artifact["url"], path, expected_sha1=artifact.get("sha1"))
             classpath.append(path)
-        classifiers = downloads.get("classifiers", {})
-        native_key = None
+        classifiers = downloads.get("classifiers", {}) if isinstance(downloads, dict) else {}
         natives_map = library.get("natives", {})
-        if current_os() in natives_map:
-            native_key = natives_map[current_os()].replace("${arch}", "64" if current_arch() == "x86_64" else "32")
-        if native_key and native_key in classifiers:
-            native = classifiers[native_key]
+        native_key = None
+        if isinstance(natives_map, dict) and current_os() in natives_map:
+            native_key = str(natives_map[current_os()]).replace("${arch}", "64" if current_arch() == "x86_64" else "32")
+        native = classifiers.get(native_key) if native_key else None
+        if native and native.get("url") and native.get("path"):
             path = LIBRARIES_DIR / native["path"]
             download_file(native["url"], path, expected_sha1=native.get("sha1"))
             natives.append(path)
     return classpath, natives
 
 
+def _merge_version(parent: dict[str, Any], child: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(parent)
+    merged.update(child)
+    if "libraries" in parent or "libraries" in child:
+        merged["libraries"] = list(parent.get("libraries", [])) + list(child.get("libraries", []))
+    for key in ("arguments", "downloads"):
+        if key in child:
+            merged[key] = child[key]
+    return merged
+
+
 def ensure_version(version_id: str, progress: Callable[[str], None] | None = None) -> dict[str, Any]:
     manifest = load_json(MANIFEST_FILE, None)
-    if not manifest:
+    if not isinstance(manifest, dict):
         if progress:
             progress("Sürüm listesi indiriliyor…")
         manifest = request_json(VERSION_MANIFEST)
@@ -298,7 +347,10 @@ def ensure_version(version_id: str, progress: Callable[[str], None] | None = Non
     entry = next((item for item in manifest.get("versions", []) if item.get("id") == version_id), None)
     if not entry:
         raise AppError(f"Minecraft {version_id} sürümü bulunamadı.")
-    local_version = VERSIONS_DIR / version_id / f"{version_id}.json"
+
+    version_dir = VERSIONS_DIR / version_id
+    local_version = version_dir / f"{version_id}.json"
+    version_dir.mkdir(parents=True, exist_ok=True)
     if not local_version.exists():
         if progress:
             progress(f"{version_id} manifesti indiriliyor…")
@@ -307,55 +359,69 @@ def ensure_version(version_id: str, progress: Callable[[str], None] | None = Non
     if not isinstance(version_json, dict):
         raise AppError("Sürüm manifesti okunamadı.")
     if version_json.get("inheritsFrom"):
-        parent_id = version_json["inheritsFrom"]
-        parent = ensure_version(parent_id, progress)
-        merged = dict(parent)
-        for key, value in version_json.items():
-            if key == "libraries":
-                merged[key] = parent.get(key, []) + value
-            elif key in {"arguments", "downloads"}:
-                merged[key] = value or parent.get(key)
-            else:
-                merged[key] = value
-        version_json = merged
-    if progress:
-        progress("Minecraft istemci dosyaları doğrulanıyor…")
+        parent = ensure_version(str(version_json["inheritsFrom"]), progress)
+        version_json = _merge_version(parent, version_json)
+
     client = version_json.get("downloads", {}).get("client", {})
-    client_path = VERSIONS_DIR / version_id / f"{version_id}.jar"
+    client_path = version_dir / f"{version_id}.jar"
+    if client.get("url") and progress:
+        progress(f"{version_id} istemci dosyası hazırlanıyor…")
     if client.get("url"):
         download_file(client["url"], client_path, expected_sha1=client.get("sha1"))
     if version_json.get("assetIndex", {}).get("url"):
         asset_index = version_json["assetIndex"]
-        asset_path = ASSETS_DIR / "indexes" / f"{asset_index['id']}.json"
-        if not asset_path.exists():
-            download_file(asset_index["url"], asset_path, expected_sha1=asset_index.get("sha1"))
-        asset_json = load_json(asset_path, {})
-        objects = asset_json.get("objects", {})
-        for obj in objects.values():
+        index_path = ASSETS_DIR / "indexes" / f"{asset_index['id']}.json"
+        if not index_path.exists():
+            download_file(asset_index["url"], index_path, expected_sha1=asset_index.get("sha1"))
+        asset_json = load_json(index_path, {})
+        for obj in asset_json.get("objects", {}).values():
             digest = obj.get("hash")
             if not digest:
                 continue
-            path = ASSETS_DIR / "objects" / digest[:2] / digest
-            if not path.exists():
-                download_file(f"https://resources.download.minecraft.net/{digest[:2]}/{digest}", path, expected_sha1=digest)
+            asset_path = ASSETS_DIR / "objects" / digest[:2] / digest
+            if not asset_path.exists():
+                download_file(
+                    f"https://resources.download.minecraft.net/{digest[:2]}/{digest}",
+                    asset_path,
+                    expected_sha1=digest,
+                )
     library_artifacts(version_json)
     return version_json
 
 
 def find_java(explicit: str) -> str:
-    if explicit and Path(explicit).exists():
-        return explicit
-    java = shutil.which("java")
-    if java:
-        return java
-    candidates = [
-        JAVA_DIR / "bin" / ("java.exe" if os.name == "nt" else "java"),
-        Path(os.getenv("JAVA_HOME", "")) / "bin" / ("java.exe" if os.name == "nt" else "java"),
-    ]
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit))
+    java_on_path = shutil.which("java")
+    if java_on_path:
+        candidates.append(Path(java_on_path))
+    java_home = os.getenv("JAVA_HOME")
+    if java_home:
+        candidates.append(Path(java_home) / "bin" / ("java.exe" if os.name == "nt" else "java"))
+    candidates.append(JAVA_DIR / "bin" / ("java.exe" if os.name == "nt" else "java"))
     for candidate in candidates:
-        if candidate.exists():
+        if candidate.is_file():
             return str(candidate)
     raise AppError("Java bulunamadı. Ayarlar bölümünden Java yolunu seçin.")
+
+
+def java_major_version(java_path: str) -> int | None:
+    try:
+        result = subprocess.run([java_path, "-version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (result.stderr or result.stdout or "").strip()
+    match = re.search(r'version\s+"(\d+)', text)
+    return int(match.group(1)) if match else None
+
+
+def required_java_major(version_json: dict[str, Any]) -> int | None:
+    value = version_json.get("javaVersion", {}).get("majorVersion")
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def apply_argument_rules(arg_list: list[dict[str, Any]] | list[str], *, replacements: dict[str, str]) -> list[str]:
@@ -364,13 +430,12 @@ def apply_argument_rules(arg_list: list[dict[str, Any]] | list[str], *, replacem
         if isinstance(item, str):
             result.append(item)
             continue
-        if not rule_allows(item.get("rules")):
+        if not isinstance(item, dict) or not rule_allows(item.get("rules")):
             continue
         value = item.get("value", [])
-        if isinstance(value, str):
-            value = [value]
-        result.extend(value)
-    expanded = []
+        values = [value] if isinstance(value, str) else list(value)
+        result.extend(str(x) for x in values)
+    expanded: list[str] = []
     for value in result:
         for key, replacement in replacements.items():
             value = value.replace(key, replacement)
@@ -378,37 +443,45 @@ def apply_argument_rules(arg_list: list[dict[str, Any]] | list[str], *, replacem
     return expanded
 
 
-def build_command(version_id: str, version_json: dict[str, Any], account: Account,
-                  settings: Settings) -> list[str]:
-    java = find_java(settings.java_path)
-    version_dir = VERSIONS_DIR / version_id
-    client_jar = version_dir / f"{version_id}.jar"
-    libraries, _ = library_artifacts(version_json)
-    classpath = os.pathsep.join(str(p) for p in libraries + [client_jar])
-    game_dir = Path(settings.game_directory)
-    game_dir.mkdir(parents=True, exist_ok=True)
-    natives_dir = version_dir / "natives"
+def extract_natives(version_id: str, version_json: dict[str, Any]) -> Path:
+    natives_dir = VERSIONS_DIR / version_id / "natives"
     natives_dir.mkdir(parents=True, exist_ok=True)
     for library in version_json.get("libraries", []):
-        if not rule_allows(library.get("rules")):
+        if not isinstance(library, dict) or not rule_allows(library.get("rules")):
             continue
-        classifiers = library.get("downloads", {}).get("classifiers", {})
         natives_map = library.get("natives", {})
         if current_os() not in natives_map:
             continue
-        key = natives_map[current_os()].replace("${arch}", "64" if current_arch() == "x86_64" else "32")
-        native = classifiers.get(key)
+        key = str(natives_map[current_os()]).replace("${arch}", "64" if current_arch() == "x86_64" else "32")
+        native = library.get("downloads", {}).get("classifiers", {}).get(key)
         if not native:
             continue
         archive = LIBRARIES_DIR / native["path"]
         with zipfile.ZipFile(archive) as zf:
             for member in zf.infolist():
-                if member.filename.startswith("META-INF/") or member.is_dir():
+                if member.is_dir() or member.filename.startswith("META-INF/"):
                     continue
-                target = natives_dir / Path(member.filename).name
+                filename = Path(member.filename).name
+                if not filename:
+                    continue
+                target = natives_dir / filename
                 with zf.open(member) as src, target.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
-    auth_args = {
+    return natives_dir
+
+
+def build_command(version_id: str, version_json: dict[str, Any], account: Account, settings: Settings) -> list[str]:
+    java = find_java(settings.java_path)
+    version_dir = VERSIONS_DIR / version_id
+    client_jar = version_dir / f"{version_id}.jar"
+    if not client_jar.exists():
+        raise AppError(f"Minecraft istemci dosyası eksik: {client_jar}")
+    libraries, _ = library_artifacts(version_json)
+    classpath = os.pathsep.join(str(path) for path in libraries + [client_jar])
+    game_dir = Path(settings.game_directory).expanduser()
+    game_dir.mkdir(parents=True, exist_ok=True)
+    natives_dir = extract_natives(version_id, version_json)
+    replacements = {
         "${auth_player_name}": account.username,
         "${auth_uuid}": account.uuid,
         "${auth_access_token}": account.access_token or "0",
@@ -417,6 +490,7 @@ def build_command(version_id: str, version_json: dict[str, Any], account: Accoun
         "${version_name}": version_id,
         "${version_type}": version_json.get("type", "release"),
         "${game_directory}": str(game_dir),
+        "${game_assets}": str(ASSETS_DIR),
         "${assets_root}": str(ASSETS_DIR),
         "${assets_index_name}": version_json.get("assetIndex", {}).get("id", "legacy"),
         "${auth_xuid}": "",
@@ -430,34 +504,46 @@ def build_command(version_id: str, version_json: dict[str, Any], account: Accoun
     }
     arguments = version_json.get("arguments", {})
     if arguments:
-        jvm_args = apply_argument_rules(arguments.get("jvm", []), replacements=auth_args)
-        game_args = apply_argument_rules(arguments.get("game", []), replacements=auth_args)
+        jvm_args = apply_argument_rules(arguments.get("jvm", []), replacements=replacements)
+        game_args = apply_argument_rules(arguments.get("game", []), replacements=replacements)
     else:
-        legacy_game = version_json.get("minecraftArguments", "")
-        jvm_args = ["-Djava.library.path=${natives_directory}"]
-        game_args = legacy_game.split() if isinstance(legacy_game, str) else []
-        game_args = apply_argument_rules(game_args, replacements=auth_args)
-    if "-cp" not in jvm_args and "-classpath" not in jvm_args:
-        jvm_args += ["-cp", classpath]
-    min_ram = max(1024, min(32768, int(settings.memory_mb * 0.25)))
-    max_ram = max(1024, min(32768, int(settings.memory_mb)))
+        raw = str(version_json.get("minecraftArguments", ""))
+        game_args = apply_argument_rules(raw.split(), replacements=replacements)
+        jvm_args = ["-Djava.library.path=${natives_directory}".replace("${natives_directory}", str(natives_dir))]
+    if not any(value in {"-cp", "-classpath"} for value in jvm_args):
+        jvm_args.extend(["-cp", classpath])
+    max_ram = max(1024, min(65536, int(settings.memory_mb)))
+    min_ram = max(512, min(max_ram, max(512, max_ram // 4)))
     jvm_args = [f"-Xms{min_ram}M", f"-Xmx{max_ram}M"] + jvm_args
-    jvm_args += [version_json["mainClass"]]
-    return [java] + jvm_args + game_args
+    main_class = version_json.get("mainClass")
+    if not main_class:
+        raise AppError("Sürüm manifestinde mainClass bulunamadı.")
+    return [java] + jvm_args + [main_class] + game_args
 
 
-def launch_game(version_id: str, settings: Settings, account: Account, log: Callable[[str], None]) -> subprocess.Popen:
-    version_json = ensure_version(version_id, lambda text: log(text))
+def launch_game(version_id: str, settings: Settings, account: Account, log: Callable[[str], None]) -> subprocess.Popen[str]:
+    version_json = ensure_version(version_id, progress=log)
     command = build_command(version_id, version_json, account, settings)
+    required = required_java_major(version_json)
+    java_path = command[0]
+    detected = java_major_version(java_path)
+    if required and detected and detected < required:
+        raise AppError(f"Bu Minecraft sürümü Java {required} istiyor; seçili Java {detected}.")
     log("Minecraft başlatılıyor…")
-    log(" ".join(f'"{part}"' if " " in part else part for part in command))
-    process = subprocess.Popen(command, cwd=settings.game_directory, stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    process = subprocess.Popen(
+        command,
+        cwd=settings.game_directory,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     threading.Thread(target=stream_process, args=(process, log), daemon=True).start()
     return process
 
 
-def stream_process(process: subprocess.Popen, log: Callable[[str], None]) -> None:
+def stream_process(process: subprocess.Popen[str], log: Callable[[str], None]) -> None:
     if process.stdout:
         for line in process.stdout:
             text = line.rstrip()
@@ -470,23 +556,31 @@ def stream_process(process: subprocess.Popen, log: Callable[[str], None]) -> Non
 def microsoft_login(client_id: str, progress: Callable[[str], None]) -> Account:
     client_id = client_id.strip() or MS_CLIENT_ID
     device = request_json(MS_DEVICE_ENDPOINT, data={"client_id": client_id, "scope": MS_SCOPE})
-    progress(f"Tarayıcıda {device['verification_uri']} adresini açın ve kodu girin: {device['user_code']}")
+    verification_uri = device.get("verification_uri") or device.get("verification_uri_complete")
+    user_code = device.get("user_code")
+    device_code = device.get("device_code")
+    if not verification_uri or not user_code or not device_code:
+        raise AppError("Microsoft cihaz kodu yanıtı eksik.")
+    progress(f"Tarayıcıda {verification_uri} adresini açın ve kodu girin: {user_code}")
     if hasattr(os, "startfile"):
         try:
-            os.startfile(device["verification_uri"])
+            os.startfile(verification_uri)
         except OSError:
             pass
     deadline = time.time() + int(device.get("expires_in", 900))
     interval = max(5, int(device.get("interval", 5)))
-    token = None
+    token: dict[str, Any] | None = None
     while time.time() < deadline:
         time.sleep(interval)
         try:
-            token = request_json(MS_TOKEN_ENDPOINT, data={
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                "client_id": client_id,
-                "device_code": device["device_code"],
-            })
+            token = request_json(
+                MS_TOKEN_ENDPOINT,
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                    "client_id": client_id,
+                    "device_code": device_code,
+                },
+            )
             break
         except AppError as exc:
             if "authorization_pending" in str(exc):
@@ -495,34 +589,48 @@ def microsoft_login(client_id: str, progress: Callable[[str], None]) -> Account:
     if not token or "access_token" not in token:
         raise AppError("Microsoft oturum süresi doldu veya giriş tamamlanmadı.")
     ms_access = token["access_token"]
-    xbl = request_json_body(XBL_AUTH_ENDPOINT, {
-        "Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": f"d={ms_access}"},
-        "RelyingParty": "http://auth.xboxlive.com",
-        "TokenType": "JWT",
-    })
+    xbl = request_json_body(
+        XBL_AUTH_ENDPOINT,
+        {
+            "Properties": {"AuthMethod": "RPS", "SiteName": "user.auth.xboxlive.com", "RpsTicket": f"d={ms_access}"},
+            "RelyingParty": "http://auth.xboxlive.com",
+            "TokenType": "JWT",
+        },
+    )
     user_hash = xbl["DisplayClaims"]["xui"][0]["uhs"]
-    xbl_token = xbl["Token"]
-    xsts = request_json_body(XSTS_ENDPOINT, {
-        "Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl_token]},
-        "RelyingParty": "rp://api.minecraftservices.com/",
-        "TokenType": "JWT",
-    })
-    xsts_token = xsts["Token"]
-    mc = request_json_body(MINECRAFT_LOGIN_ENDPOINT, {"identityToken": f"XBL3.0 x={user_hash};{xsts_token}"})
-    profile = request_json_body(MINECRAFT_PROFILE_ENDPOINT, headers={"Authorization": f"Bearer {mc['access_token']}"})
+    xsts = request_json_body(
+        XSTS_ENDPOINT,
+        {
+            "Properties": {"SandboxId": "RETAIL", "UserTokens": [xbl["Token"]]},
+            "RelyingParty": "rp://api.minecraftservices.com/",
+            "TokenType": "JWT",
+        },
+    )
+    mc = request_json_body(
+        MINECRAFT_LOGIN_ENDPOINT,
+        {"identityToken": f"XBL3.0 x={user_hash};{xsts['Token']}"},
+    )
+    profile = request_json_body(
+        MINECRAFT_PROFILE_ENDPOINT,
+        headers={"Authorization": f"Bearer {mc['access_token']}"},
+    )
     if not profile.get("id") or not profile.get("name"):
         raise AppError("Bu Microsoft hesabında kullanılabilir bir Minecraft profili bulunamadı.")
     return Account(
-        id=str(uuid.uuid4()), username=profile["name"], uuid=profile["id"], type="microsoft",
-        access_token=mc["access_token"], refresh_token=token.get("refresh_token", ""),
+        id=str(uuid.uuid4()),
+        username=profile["name"],
+        uuid=profile["id"],
+        type="microsoft",
+        access_token=mc["access_token"],
+        refresh_token=token.get("refresh_token", ""),
         expires_at=time.time() + int(mc.get("expires_in", 86400)),
     )
 
 
 def make_offline_account(username: str) -> Account:
     clean = re.sub(r"[^A-Za-z0-9_]+", "", username).strip()[:16]
-    if not clean:
-        raise AppError("Geçerli bir kullanıcı adı girin.")
+    if not 3 <= len(clean) <= 16:
+        raise AppError("Kullanıcı adı 3–16 karakter olmalı ve yalnızca harf, sayı veya _ içermeli.")
     digest = hashlib.md5(("OfflinePlayer:" + clean).encode("utf-8")).hexdigest()
     offline_uuid = f"{digest[:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
     return Account(id=str(uuid.uuid4()), username=clean, uuid=offline_uuid, type="offline")
@@ -532,7 +640,7 @@ class LauncherApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME} {APP_VERSION}")
-        self.geometry("1080x720")
+        self.geometry("1100x720")
         self.minsize(900, 600)
         self.settings = load_settings()
         self.accounts = load_accounts()
@@ -560,7 +668,7 @@ class LauncherApp(tk.Tk):
         header = ttk.Frame(outer)
         header.pack(fill="x")
         ttk.Label(header, text="CopperBars Launcher", style="Title.TLabel").pack(side="left")
-        ttk.Label(header, text=f"v{APP_VERSION} • modern Minecraft launcher", style="Sub.TLabel").pack(side="right", pady=(8, 0))
+        ttk.Label(header, text=f"v{APP_VERSION} • Minecraft Java", style="Sub.TLabel").pack(side="right", pady=(8, 0))
 
         content = ttk.Frame(outer)
         content.pack(fill="both", expand=True, pady=(18, 0))
@@ -577,7 +685,7 @@ class LauncherApp(tk.Tk):
         self.version_var = tk.StringVar(value=self.settings.selected_version)
         self.version_combo = ttk.Combobox(left, textvariable=self.version_var, state="readonly")
         self.version_combo.pack(fill="x", pady=(6, 16))
-        self.version_combo.bind("<<ComboboxSelected>>", lambda _: self._save_selection())
+        self.version_combo.bind("<<ComboboxSelected>>", lambda _event: self._save_selection())
 
         ttk.Label(left, text="Oyun klasörü").pack(anchor="w")
         game_row = ttk.Frame(left)
@@ -588,24 +696,23 @@ class LauncherApp(tk.Tk):
 
         ttk.Label(left, text="RAM (MB)").pack(anchor="w")
         self.ram_var = tk.IntVar(value=int(self.settings.memory_mb))
-        ttk.Spinbox(left, from_=1024, to=32768, increment=512, textvariable=self.ram_var, width=10).pack(anchor="w", pady=(6, 16))
+        ttk.Spinbox(left, from_=1024, to=65536, increment=512, textvariable=self.ram_var, width=12).pack(anchor="w", pady=(6, 16))
 
         ttk.Label(left, text="Durum").pack(anchor="w")
         self.status = tk.StringVar(value="Hazır")
-        ttk.Label(left, textvariable=self.status, wraplength=560).pack(anchor="w", pady=(6, 12))
-
+        ttk.Label(left, textvariable=self.status, wraplength=620).pack(anchor="w", pady=(6, 12))
         ttk.Button(left, text="OYNA", style="Launch.TButton", command=self._launch).pack(fill="x", pady=(8, 8))
         ttk.Button(left, text="Ayarlar", command=self._open_settings).pack(fill="x")
 
+        ttk.Label(right, text="Profil").pack(anchor="w")
         self.account_var = tk.StringVar()
         self.account_combo = ttk.Combobox(right, textvariable=self.account_var, state="readonly")
-        self.account_combo.pack(fill="x", pady=(0, 12))
-        self.account_combo.bind("<<ComboboxSelected>>", lambda _: self._save_selection())
+        self.account_combo.pack(fill="x", pady=(6, 12))
         ttk.Button(right, text="Microsoft hesabı ekle", command=self._login_microsoft).pack(fill="x", pady=4)
         ttk.Button(right, text="Offline profil ekle", command=self._add_offline).pack(fill="x", pady=4)
         ttk.Button(right, text="Seçili hesabı sil", command=self._delete_account).pack(fill="x", pady=4)
 
-        ttk.Label(right, text="Konsol", padding=(0, 18, 0, 6)).pack(anchor="w")
+        ttk.Label(right, text="Günlük", padding=(0, 18, 0, 6)).pack(anchor="w")
         self.log_text = tk.Text(right, height=20, wrap="word", state="disabled", font=("Consolas", 9))
         self.log_text.pack(fill="both", expand=True)
 
@@ -620,27 +727,28 @@ class LauncherApp(tk.Tk):
     def _set_status(self, message: str) -> None:
         self.after(0, lambda: self.status.set(message))
 
-    def _set_busy(self, value: bool) -> None:
-        self.busy = value
-
     def _load_versions_async(self) -> None:
         def worker() -> None:
             try:
                 manifest = load_json(MANIFEST_FILE, None)
-                if not manifest:
+                if not isinstance(manifest, dict):
                     manifest = request_json(VERSION_MANIFEST)
                     save_json(MANIFEST_FILE, manifest)
-                self.versions = [v["id"] for v in manifest.get("versions", []) if v.get("type") in {"release", "snapshot"}]
-                self.versions = self.versions[:200]
+                versions = [
+                    item["id"]
+                    for item in manifest.get("versions", [])
+                    if item.get("type") in {"release", "snapshot"} and item.get("id")
+                ]
+                self.versions = versions[:300]
                 self.after(0, lambda: self.version_combo.configure(values=self.versions))
                 if self.settings.selected_version not in self.versions and self.versions:
-                    self.settings.selected_version = self.versions[0]
-                    self.version_var.set(self.versions[0])
+                    self.settings.selected_version = versions[0]
+                    self.version_var.set(versions[0])
                     save_settings(self.settings)
-                self._set_status(f"{len(self.versions)} Minecraft sürümü hazır.")
+                self._set_status(f"{len(self.versions)} sürüm hazır.")
             except Exception as exc:
                 self._log(f"Sürüm listesi alınamadı: {exc}")
-                self._set_status("Sürüm listesi çevrimdışı. İnternet bağlantısını kontrol edin.")
+                self._set_status("Sürüm listesi alınamadı; internet bağlantısını kontrol edin.")
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_accounts(self) -> None:
@@ -650,8 +758,9 @@ class LauncherApp(tk.Tk):
             index = next((i for i, a in enumerate(self.accounts) if a.id == self.settings.selected_account), 0)
             self.account_combo.current(index)
             self.settings.selected_account = self.accounts[index].id
+            save_settings(self.settings)
         else:
-            self.account_var.set("Hesap ekleyin")
+            self.account_combo.set("Hesap ekleyin")
 
     def _save_selection(self) -> None:
         self.settings.selected_version = self.version_var.get() or DEFAULT_VERSION
@@ -660,9 +769,9 @@ class LauncherApp(tk.Tk):
             self.settings.memory_mb = int(self.ram_var.get())
         except (TypeError, ValueError):
             self.settings.memory_mb = 4096
-        idx = self.account_combo.current()
-        if 0 <= idx < len(self.accounts):
-            self.settings.selected_account = self.accounts[idx].id
+        index = self.account_combo.current()
+        if 0 <= index < len(self.accounts):
+            self.settings.selected_account = self.accounts[index].id
         save_settings(self.settings)
 
     def _choose_game_dir(self) -> None:
@@ -672,12 +781,12 @@ class LauncherApp(tk.Tk):
             self._save_selection()
 
     def _selected_account(self) -> Account:
-        idx = self.account_combo.current()
-        if idx < 0 or idx >= len(self.accounts):
+        index = self.account_combo.current()
+        if not 0 <= index < len(self.accounts):
             raise AppError("Önce bir hesap ekleyin.")
-        account = self.accounts[idx]
-        if account.type == "microsoft" and account.expires_at and account.expires_at < time.time() and account.refresh_token:
-            raise AppError("Microsoft oturumu süresi doldu. Yeniden giriş yapın.")
+        account = self.accounts[index]
+        if account.type == "microsoft" and account.expires_at and account.expires_at < time.time():
+            raise AppError("Microsoft oturumunun süresi dolmuş. Yeniden giriş yapın.")
         return account
 
     def _launch(self) -> None:
@@ -686,43 +795,42 @@ class LauncherApp(tk.Tk):
         try:
             self._save_selection()
             account = self._selected_account()
-            version = self.settings.selected_version
+            version = self.settings.selected_version.strip()
             if not version:
                 raise AppError("Bir Minecraft sürümü seçin.")
         except AppError as exc:
             messagebox.showerror(APP_NAME, str(exc))
             return
-        self._set_busy(True)
+        self.busy = True
         self._set_status("Hazırlanıyor…")
-        self._log(f"{version} hazırlanıyor…")
         settings = Settings(**asdict(self.settings))
-        settings.memory_mb = max(1024, min(32768, int(settings.memory_mb)))
+        settings.memory_mb = max(1024, min(65536, int(settings.memory_mb)))
+
         def worker() -> None:
             try:
                 process = launch_game(version, settings, account, self._log)
                 self._set_status("Minecraft çalışıyor.")
                 self.after(0, lambda: self._watch_process(process))
             except Exception as exc:
+                self.busy = False
                 self._set_status("Başlatma başarısız.")
                 self._log(f"HATA: {exc}")
                 self.after(0, lambda: messagebox.showerror(APP_NAME, str(exc)))
-                self._set_busy(False)
         threading.Thread(target=worker, daemon=True).start()
 
-    def _watch_process(self, process: subprocess.Popen) -> None:
-        def poll() -> None:
-            if process.poll() is None:
-                self.after(500, poll)
-            else:
-                self._set_busy(False)
-                self._set_status("Hazır")
-        poll()
+    def _watch_process(self, process: subprocess.Popen[str]) -> None:
+        if process.poll() is None:
+            self.after(500, lambda: self._watch_process(process))
+        else:
+            self.busy = False
+            self._set_status("Hazır")
 
     def _login_microsoft(self) -> None:
         if self.busy:
             return
-        self._set_busy(True)
+        self.busy = True
         self._set_status("Microsoft girişi bekleniyor…")
+
         def worker() -> None:
             try:
                 account = microsoft_login(self.settings.client_id, self._log)
@@ -735,10 +843,10 @@ class LauncherApp(tk.Tk):
                 self._log(f"Microsoft hesabı eklendi: {account.username}")
             except Exception as exc:
                 self._log(f"Microsoft giriş hatası: {exc}")
-                self.after(0, lambda: messagebox.showerror("Microsoft Girişi", str(exc)))
                 self._set_status("Giriş başarısız.")
+                self.after(0, lambda: messagebox.showerror("Microsoft Girişi", str(exc)))
             finally:
-                self._set_busy(False)
+                self.busy = False
         threading.Thread(target=worker, daemon=True).start()
 
     def _add_offline(self) -> None:
@@ -749,6 +857,7 @@ class LauncherApp(tk.Tk):
         value = tk.StringVar()
         entry = ttk.Entry(dialog, textvariable=value, width=30)
         entry.pack(padx=16)
+
         def add() -> None:
             try:
                 account = make_offline_account(value.get())
@@ -761,19 +870,20 @@ class LauncherApp(tk.Tk):
             save_settings(self.settings)
             dialog.destroy()
             self._refresh_accounts()
+
         ttk.Button(dialog, text="Ekle", command=add).pack(pady=16)
         entry.focus_set()
         dialog.transient(self)
         dialog.grab_set()
 
     def _delete_account(self) -> None:
-        idx = self.account_combo.current()
-        if idx < 0 or idx >= len(self.accounts):
+        index = self.account_combo.current()
+        if not 0 <= index < len(self.accounts):
             return
-        account = self.accounts[idx]
+        account = self.accounts[index]
         if not messagebox.askyesno(APP_NAME, f"{account.username} hesabı silinsin mi?"):
             return
-        self.accounts.pop(idx)
+        self.accounts.pop(index)
         save_accounts(self.accounts)
         self.settings.selected_account = self.accounts[0].id if self.accounts else ""
         save_settings(self.settings)
@@ -782,7 +892,7 @@ class LauncherApp(tk.Tk):
     def _open_settings(self) -> None:
         window = tk.Toplevel(self)
         window.title("CopperBars Launcher Ayarları")
-        window.geometry("520x360")
+        window.geometry("540x390")
         frame = ttk.Frame(window, padding=18)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Java yolu").pack(anchor="w")
@@ -790,15 +900,17 @@ class LauncherApp(tk.Tk):
         row = ttk.Frame(frame)
         row.pack(fill="x", pady=(5, 14))
         ttk.Entry(row, textvariable=java_var).pack(side="left", fill="x", expand=True)
+
         def choose_java() -> None:
-            chosen = filedialog.askopenfilename(filetypes=[("Java", "java.exe"), ("All files", "*.*")])
+            chosen = filedialog.askopenfilename(filetypes=[("Java", "java.exe"), ("Tüm dosyalar", "*.*")])
             if chosen:
                 java_var.set(chosen)
+
         ttk.Button(row, text="Seç", command=choose_java).pack(side="right", padx=(6, 0))
         ttk.Label(frame, text="Microsoft Client ID").pack(anchor="w")
         client_var = tk.StringVar(value=self.settings.client_id)
         ttk.Entry(frame, textvariable=client_var).pack(fill="x", pady=(5, 14))
-        ttk.Label(frame, text="Pencere genişliği / yüksekliği").pack(anchor="w")
+        ttk.Label(frame, text="Oyun çözünürlüğü").pack(anchor="w")
         size_row = ttk.Frame(frame)
         size_row.pack(fill="x", pady=(5, 14))
         width_var = tk.IntVar(value=self.settings.width)
@@ -806,20 +918,25 @@ class LauncherApp(tk.Tk):
         ttk.Spinbox(size_row, from_=800, to=3840, textvariable=width_var, width=10).pack(side="left")
         ttk.Label(size_row, text=" x ").pack(side="left")
         ttk.Spinbox(size_row, from_=600, to=2160, textvariable=height_var, width=10).pack(side="left")
+        ttk.Label(frame, text="Değişiklikler bir sonraki başlatmada kullanılır.", wraplength=480).pack(anchor="w", pady=(8, 14))
+
         def save() -> None:
             self.settings.java_path = java_var.get().strip()
             self.settings.client_id = client_var.get().strip() or MS_CLIENT_ID
-            self.settings.width = max(800, int(width_var.get()))
-            self.settings.height = max(600, int(height_var.get()))
+            self.settings.width = max(800, min(3840, int(width_var.get())))
+            self.settings.height = max(600, min(2160, int(height_var.get())))
             save_settings(self.settings)
             window.destroy()
-        ttk.Button(frame, text="Kaydet", command=save).pack(fill="x", pady=(16, 4))
+
+        ttk.Button(frame, text="Kaydet", command=save).pack(fill="x", side="bottom")
+
+
+def main() -> None:
+    if sys.version_info < (3, 11):
+        raise SystemExit("CopperBars Launcher Python 3.11 veya daha yeni bir sürüm gerektirir.")
+    app = LauncherApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":
-    try:
-        app = LauncherApp()
-        app.mainloop()
-    except Exception as exc:
-        messagebox.showerror(APP_NAME, f"Başlatma hatası:\n{exc}")
-        raise
+    main()
